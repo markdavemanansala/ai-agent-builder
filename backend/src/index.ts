@@ -42,9 +42,9 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
 // Routes
-app.use('/api/auth', authRoutes)
-app.use('/api/agents', agentRoutes)
-app.use('/api/public', publicRoutes)
+app.use('/auth', authRoutes)
+app.use('/agents', agentRoutes)
+app.use('/public', publicRoutes)
 
 // Root route for debugging
 app.get('/', (req, res) => {
@@ -52,12 +52,12 @@ app.get('/', (req, res) => {
     message: 'AI Agent Builder Backend API', 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    routes: ['/api/health', '/api/agents', '/api/public']
+    routes: ['/health', '/agents', '/public', '/auth']
   })
 })
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() })
 })
 
