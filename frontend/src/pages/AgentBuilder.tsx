@@ -18,6 +18,9 @@ import {
 import { Agent, LLMModel } from '../types'
 import { WorkflowBuilder } from '../components/WorkflowBuilder'
 import { ChatInterface } from '../components/ChatInterface'
+import { apiService } from '../services/api'
+import { ErrorDisplay, createErrorDetails, COMMON_ERROR_SUGGESTIONS } from '../components/ErrorDisplay'
+import { DarkModeToggle } from '../components/DarkModeToggle'
 
 // Agent templates
 const AGENT_TEMPLATES = [
@@ -113,14 +116,43 @@ export const AgentBuilder: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [, setWorkflow] = useState<any[]>([])
+  const [error, setError] = useState<any>(null)
 
   // Load agent if editing
   useEffect(() => {
     if (isEditing && id) {
-      // TODO: Load agent from API
-      console.log('Loading agent:', id)
+      loadAgent(id)
     }
   }, [id, isEditing])
+
+  const loadAgent = async (agentId: string) => {
+    try {
+      const loadedAgent = await apiService.getPublicAgent(agentId)
+      setAgent(loadedAgent)
+    } catch (error) {
+      console.error('Error loading agent:', error)
+      // If it's a private agent, try to load from user's agents
+      try {
+        const userAgents = await apiService.getAgents()
+        const userAgent = userAgents.find(a => a.id === agentId)
+        if (userAgent) {
+          setAgent(userAgent)
+        }
+      } catch (userError) {
+        console.error('Error loading user agent:', userError)
+        setError(createErrorDetails(
+          'Failed to load agent',
+          `Could not load agent with ID: ${agentId}`,
+          [
+            'Check if the agent ID is correct',
+            'Verify you have permission to access this agent',
+            'Ensure the backend server is running',
+            'Check your internet connection'
+          ]
+        ))
+      }
+    }
+  }
 
   const handleTemplateSelect = (template: typeof AGENT_TEMPLATES[0]) => {
     setAgent(prev => ({
@@ -134,20 +166,52 @@ export const AgentBuilder: React.FC = () => {
 
   const handleSave = async () => {
     if (!agent.name || !agent.prompt) {
-      alert('Please fill in agent name and prompt')
+      setError(createErrorDetails(
+        'Missing Required Fields',
+        'Agent name and prompt are required to save',
+        [
+          'Enter a name for your agent',
+          'Write a prompt that defines the agent\'s behavior',
+          'Make sure both fields are not empty'
+        ]
+      ))
       return
     }
 
     setIsSaving(true)
     try {
-      // TODO: Save agent via API
-      console.log('Saving agent:', agent)
-      setTimeout(() => {
-        setIsSaving(false)
-        navigate('/')
-      }, 1000)
+      let savedAgent: Agent
+      
+      if (isEditing && id) {
+        // Update existing agent
+        savedAgent = await apiService.updateAgent(id, agent)
+      } else {
+        // Create new agent
+        savedAgent = await apiService.createAgent(agent)
+      }
+      
+      console.log('Agent saved successfully:', savedAgent)
+      navigate('/')
     } catch (error) {
       console.error('Error saving agent:', error)
+      
+      let suggestions = COMMON_ERROR_SUGGESTIONS.NETWORK_ERROR
+      if (error instanceof Error) {
+        if (error.message.includes('Cannot connect to backend')) {
+          suggestions = COMMON_ERROR_SUGGESTIONS.NETWORK_ERROR
+        } else if (error.message.includes('auth') || error.message.includes('token')) {
+          suggestions = COMMON_ERROR_SUGGESTIONS.AUTH_ERROR
+        } else if (error.message.includes('validation') || error.message.includes('required')) {
+          suggestions = COMMON_ERROR_SUGGESTIONS.VALIDATION_ERROR
+        }
+      }
+      
+      setError(createErrorDetails(
+        'Failed to Save Agent',
+        error instanceof Error ? error.message : 'Unknown error occurred',
+        suggestions
+      ))
+    } finally {
       setIsSaving(false)
     }
   }
@@ -160,29 +224,46 @@ export const AgentBuilder: React.FC = () => {
     }
 
     try {
-      // TODO: Publish agent via API
-      console.log('Publishing agent:', agent)
-      alert('Agent published! You can now share the public link.')
+      // First save the agent, then make it public
+      let savedAgent: Agent
+      
+      if (isEditing && id) {
+        savedAgent = await apiService.updateAgent(id, { ...agent, is_public: true })
+      } else {
+        savedAgent = await apiService.createAgent({ ...agent, is_public: true })
+      }
+      
+      const publicUrl = `${window.location.origin}/agent/${savedAgent.id}`
+      alert(`Agent published! Share this link: ${publicUrl}`)
+      
+      // Copy to clipboard if possible
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(publicUrl)
+      }
     } catch (error) {
       console.error('Error publishing agent:', error)
+      alert('Failed to publish agent. Please try again.')
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+      {/* Error Display */}
+      <ErrorDisplay error={error} onClose={() => setError(null)} />
+      
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center">
               <button
                 onClick={() => navigate('/')}
-                className="mr-4 p-2 text-gray-400 hover:text-gray-600"
+                className="mr-4 p-2 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
               >
                 <ArrowLeft className="h-5 w-5" />
               </button>
-              <Bot className="h-8 w-8 text-primary-600" />
-              <h1 className="ml-2 text-2xl font-bold text-gray-900">
+              <Bot className="h-8 w-8 text-primary-600 dark:text-primary-400" />
+              <h1 className="ml-2 text-2xl font-bold text-gray-900 dark:text-white">
                 {isEditing ? 'Edit Agent' : 'Create New Agent'}
               </h1>
             </div>
@@ -191,17 +272,18 @@ export const AgentBuilder: React.FC = () => {
                 onClick={() => setAgent(prev => ({ ...prev, is_public: !prev.is_public }))}
                 className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
                   agent.is_public
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-gray-100 text-gray-700'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                    : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
                 }`}
               >
                 {agent.is_public ? <Eye className="h-4 w-4 mr-1" /> : <EyeOff className="h-4 w-4 mr-1" />}
                 {agent.is_public ? 'Public' : 'Private'}
               </button>
+              <DarkModeToggle />
               <button
                 onClick={handleSave}
                 disabled={isSaving}
-                className="flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50"
+                className="flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 dark:focus:ring-offset-gray-800"
               >
                 <Save className="h-4 w-4 mr-2" />
                 {isSaving ? 'Saving...' : 'Save'}
@@ -370,8 +452,17 @@ export const AgentBuilder: React.FC = () => {
                     agentPrompt={agent.prompt}
                     agentModel={agent.model?.name}
                     onMessage={async (message) => {
-                      // TODO: Call actual API
-                      return `Mock response to: "${message}". This would call ${agent.model?.name || 'the selected model'} with your agent's prompt.`
+                      if (!agent.id) {
+                        return `Mock response to: "${message}". Save the agent first to test with real AI.`
+                      }
+                      
+                      try {
+                        const response = await apiService.chatWithAgent(agent.id, message)
+                        return response.response
+                      } catch (error) {
+                        console.error('Error testing agent:', error)
+                        return `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`
+                      }
                     }}
                   />
                 </div>
